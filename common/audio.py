@@ -1,18 +1,28 @@
 """Builds the voice-over (espeak-ng + MBROLA), a chiptune backing track and SFX.
 
-Writes build/voice.wav, build/mix.wav and build/timeline.json.
+Usage: python3 common/audio.py <episode_dir>
+
+Reads <episode_dir>/script.py (SCENES, optional MARKS) and writes
+<episode_dir>/build/{voice.wav,mix.wav,timeline.json}.
 """
+import importlib.util
 import json
 import os
 import subprocess
+import sys
 import wave
 
 import numpy as np
 
-from script import SCENES
-
 SR = 44100
-BUILD = os.path.join(os.path.dirname(__file__), "build")
+EPISODE = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+BUILD = os.path.join(EPISODE, "build")
+_spec = importlib.util.spec_from_file_location("script", os.path.join(EPISODE, "script.py"))
+script = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(script)
+SCENES = script.SCENES
+# name -> (scene, line index, offset seconds, sfx) ; sfx is "blip", "cheer" or None
+MARKS = getattr(script, "MARKS", {})
 VOICE = os.environ.get("VOICE", "mb-us2")
 SPEED = os.environ.get("SPEED", "168")
 
@@ -130,6 +140,20 @@ def whoosh():
     return 0.3 * y * w
 
 
+def cheer():
+    n = int(1.6 * SR)
+    rng = np.random.default_rng(5)
+    x = rng.uniform(-1, 1, n)
+    y = np.zeros(n)
+    for i in range(1, n):
+        y[i] = y[i - 1] + 0.25 * (x[i] - y[i - 1])
+    t = np.arange(n) / SR
+    return 0.5 * y * np.minimum(1, t / 0.15) * np.exp(-t / 0.7)
+
+
+SFX = {"blip": blip, "cheer": cheer}
+
+
 def main():
     os.makedirs(BUILD, exist_ok=True)
     timeline = {"scenes": []}
@@ -174,12 +198,13 @@ def main():
 
     for sc in timeline["scenes"][1:]:
         add(sc["start"], whoosh())
-    # handover moments
-    g = next(s for s in timeline["scenes"] if s["name"] == "graph")
-    add(g["lines"][1]["start"] - 0.05, blip())
-    h = next(s for s in timeline["scenes"] if s["name"] == "handover")
-    timeline["jump"] = h["lines"][2]["start"] + 0.9
-    add(timeline["jump"], blip())
+    timeline["marks"] = {}
+    for name, (scene, line, offset, kind) in MARKS.items():
+        sc = next(x for x in timeline["scenes"] if x["name"] == scene)
+        at = sc["lines"][line]["start"] + offset
+        timeline["marks"][name] = at
+        if kind:
+            add(at, SFX[kind]())
 
     mix = voice + music + sfx * 0.6
     mix *= 0.95 / np.abs(mix).max()

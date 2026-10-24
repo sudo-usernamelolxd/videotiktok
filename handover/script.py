@@ -36,3 +36,9 @@ SCENES = [
 CAPTIONS = {
     "doom scrolling": "doomscrolling",
 }
+
+# Timed moments: name -> (scene, line index, offset seconds, sound effect)
+MARKS = {
+    "handover": ("graph", 1, -0.05, "blip"),
+    "jump": ("handover", 2, 0.9, "blip"),
+}
